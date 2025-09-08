@@ -89,11 +89,10 @@ function getMenuText(ctx) {
     `;
 }
 function getButtons() {
+    // Each button on its own row (vertical stack)
     return Markup.inlineKeyboard([
-        [
-            Markup.button.url('🔗 Telegram Channel', TELEGRAM_CHANNEL_URL),
-            Markup.button.url('🟢 WhatsApp Channel', WHATSAPP_CHANNEL_URL)
-        ]
+        [Markup.button.url('🔗 Telegram Channel', TELEGRAM_CHANNEL_URL)],
+        [Markup.button.url('🟢 WhatsApp Channel', WHATSAPP_CHANNEL_URL)]
     ]);
 }
 async function sendBannerWithMenu(ctx, caption) {
