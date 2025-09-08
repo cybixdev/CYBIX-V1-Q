@@ -1,350 +1,464 @@
-#!/usr/bin/env python3
-"""
-CYBIX V1 – zero-error, zero-crash, single-file Telegram bot
-Requirements: see requirements.txt
-"""
 import os
-import time
 import logging
-import psutil
-import aiohttp
-import threading
 import asyncio
+import json
 from datetime import datetime
+import aiohttp
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ParseMode
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ---------- env ----------
-load_dotenv()
-TOKEN   = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise RuntimeError("Missing BOT_TOKEN environment variable")
-OWNER   = int(os.getenv("OWNER_ID", "0"))
-DEF_PRE = os.getenv("DEFAULT_PREFIX", ".")
-PORT    = int(os.getenv("PORT", "8000"))
-
-logging.basicConfig(
-    format="[%(asctime)s] %(levelname)s » %(message)s",
-    datefmt="%H:%M:%S",
-    level=logging.INFO,
-)
-log = logging.getLogger("CYBIX")
-
-# ---------- const ----------
+# --- LOAD ENV ---
+load_dotenv(".env")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+OWNER_NAME = os.getenv("OWNER_NAME", "CYBIX DEV")
+VERSION = "1.0.0"
 BANNER_URL = "https://files.catbox.moe/7dozqn.jpg"
-CHANNEL_BT = [
-    [InlineKeyboardButton("ᴄʏʙɪx ᴛᴇᴄʜ", url="https://t.me/cybixtech")],
-    [InlineKeyboardButton("ᴡʜᴀᴛꜱᴀᴘᴘ ᴄʜᴀɴɴᴇʟ", url="https://whatsapp.com/channel/0029VbB8svo65yD8WDtzwd0X")]
+TG_CHANNEL = "cybixtech"
+TG_CHANNEL_LINK = "https://t.me/cybixtech"
+WA_CHANNEL = "https://whatsapp.com/channel/0029VbB8svo65yD8WDtzwd0X"
+DEFAULT_PREFIXES = [".", "/"]
+USERS_FILE = "users.json"
+CHATS_FILE = "chats.json"
+
+START_TIME = datetime.utcnow()
+PREFIXES = DEFAULT_PREFIXES[:]
+PLUGINS = [
+    "ai_menu", "dl_menu", "other_menu", "fun_menu", "dev_menu"
 ]
-MARKUP = InlineKeyboardMarkup(CHANNEL_BT)
 
-START_TIME = time.time()
-USERS      = set()
-PREFIX     = DEF_PRE
-BOT_NAME   = os.getenv("BOT_NAME", "CYBIX V1")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("cybix-bot")
 
-# ---------- util ----------
-def hms(seconds: float) -> str:
-    s = int(seconds)
-    h = s // 3600
-    m = (s % 3600) // 60
-    sec = s % 60
-    return f"{h:02d}:{m:02d}:{sec:02d}"
-
-def memory() -> str:
+# --- USERS/CHATS TRACKING ---
+def load_json_set(fname):
     try:
-        return f"{psutil.virtual_memory().percent}%"
+        with open(fname, "r") as f:
+            return set(json.load(f))
+    except:
+        return set()
+def save_json_set(fname, s):
+    with open(fname, "w") as f:
+        json.dump(list(s), f)
+
+USERS = load_json_set(USERS_FILE)
+CHATS = load_json_set(CHATS_FILE)
+
+def add_user(uid):
+    USERS.add(uid)
+    save_json_set(USERS_FILE, USERS)
+def add_chat(cid):
+    CHATS.add(cid)
+    save_json_set(CHATS_FILE, CHATS)
+
+# --- UTILS ---
+def uptime_str():
+    delta = datetime.utcnow() - START_TIME
+    hours, remainder = divmod(int(delta.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {seconds}s"
+def now_time():
+    return datetime.now().strftime("%H:%M:%S")
+def now_date():
+    return datetime.now().strftime("%Y-%m-%d")
+def get_memory():
+    try:
+        import psutil
+        process = psutil.Process()
+        mem = process.memory_info().rss / 1024 / 1024
+        return f"{mem:.2f}MB"
     except Exception:
-        return "n/a"
-
-async def api_get(url: str) -> str:
-    try:
-        timeout = aiohttp.ClientTimeout(total=25)
-        async with aiohttp.ClientSession(timeout=timeout) as ses:
-            async with ses.get(url) as resp:
-                if resp.status != 200:
-                    return f"HTTP {resp.status}"
-                try:
-                    data = await resp.json()
-                    # try common fields first
-                    return data.get("result") or data.get("response") or str(data)
-                except Exception:
-                    return await resp.text()
-    except Exception as e:
-        return str(e)
-
-async def send_banner_caption(update: Update, text: str) -> None:
-    # safe checks
-    chat = update.effective_chat
-    if chat is None:
-        return
-    await chat.send_photo(
-        photo=BANNER_URL,
-        caption=text,
-        reply_markup=MARKUP,
-        parse_mode="HTML"
-    )
-
-# ---------- stats ----------
-def get_stats(update: Update) -> dict:
-    now = datetime.now()
-    user = update.effective_user.first_name if update.effective_user else "Unknown"
-    user_id = update.effective_user.id if update.effective_user else 0
-    return {
-        "prefix"   : PREFIX,
-        "owner"    : OWNER,
-        "user"     : user,
-        "user_id"  : user_id,
-        "users"    : len(USERS),
-        "speed"    : hms(time.time() - START_TIME),
-        "status"   : "✅ Online",
-        "plugins"  : "21",
-        "version"  : "1.0.0",
-        "time_now" : now.strftime("%H:%M:%S"),
-        "date_now" : now.strftime("%Y-%m-%d"),
-        "memory"   : memory()
-    }
-
-# ---------- menu ----------
-async def menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    s = get_stats(update)
-    text = f"""
-━───〔 𝐂𝐘𝐁𝐈𝐗 𝐕1 〕───━━╮
-│ ✦ ᴘʀᴇғɪx : <code>{s['prefix']}</code>
-│ ✦ ᴏᴡɴᴇʀ : <code>{s['owner']}</code>
-│ ✦ ᴜsᴇʀ : <code>{s['user']}</code>
-│ ✦ ᴜsᴇʀ ɪᴅ : <code>{s['user_id']}</code>
-│ ✦ ᴜsᴇʀs : <code>{s['users']}</code>
-│ ✦ sᴘᴇᴇᴅ : <code>{s['speed']}</code>
-│ ✦ sᴛᴀᴛᴜs : <code>{s['status']}</code>
-│ ✦ ᴘʟᴜɢɪɴs : <code>{s['plugins']}</code>
-│ ✦ ᴠᴇʀsɪᴏɴ : <code>{s['version']}</code>
-│ ✦ ᴛɪᴍᴇ ɴᴏᴡ : <code>{s['time_now']}</code>
-│ ✦ ᴅᴀᴛᴇ ɴᴏᴡ : <code>{s['date_now']}</code>
-│ ✦ ᴍᴇᴍᴏʀʏ : <code>{s['memory']}</code>
+        return "N/A"
+def get_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Telegram Channel", url=TG_CHANNEL_LINK),
+            InlineKeyboardButton(text="WhatsApp Channel", url=WA_CHANNEL)
+        ]
+    ])
+async def fetch_api(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as r:
+            try:
+                if r.content_type == "application/json":
+                    return await r.json()
+            except Exception:
+                pass
+            return await r.text()
+def menu_caption(user: types.User):
+    prefix = PREFIXES[0]
+    return f"""
+╭━───〔 𝐂𝐘𝐁𝐈𝐗 𝐕1 〕───━━╮
+│ ✦ ᴘʀᴇғɪx : <code>{prefix}</code>
+│ ✦ ᴏᴡɴᴇʀ : <b>{OWNER_NAME}</b>
+│ ✦ ᴜsᴇʀ : <b>{user.full_name}</b>
+│ ✦ ᴜsᴇʀ ɪᴅ : <code>{user.id}</code>
+│ ✦ ᴜsᴇʀs : <b>{len(USERS)}</b>
+│ ✦ sᴘᴇᴇᴅ : <b>Fast</b>
+│ ✦ sᴛᴀᴛᴜs : <b>Online</b>
+│ ✦ ᴘʟᴜɢɪɴs : <b>{', '.join(PLUGINS)}</b>
+│ ✦ ᴠᴇʀsɪᴏɴ : <b>{VERSION}</b>
+│ ✦ ᴛɪᴍᴇ ɴᴏᴡ : <b>{now_time()}</b>
+│ ✦ ᴅᴀᴛᴇ ɴᴏᴡ : <b>{now_date()}</b>
+│ ✦ ᴍᴇᴍᴏʀʏ : <b>{get_memory()}</b>
 ╰───────────────────╯
-
-◪  <b>𝐀𝐈 𝐌𝐄𝐍𝐔</b>
+<code>◪  𝐀𝐈 𝐌𝐄𝐍𝐔
   │
-  ├─ ❏ ᴄʜᴀᴛɢᴘᴛ
-  ├─ ❏ ᴏᴘᴇɴᴀɪ
-  ├─ ❏ ʙʟᴀᴄᴋʙᴏx
-  ├─ ❏ ɢᴇᴍɪɴɪ
-  ├─ ❏ ᴅᴇᴇᴘsᴇᴇᴋ
-  └─ ❏ ᴛᴇxᴛ2ɪᴍɢ
+  ├─ ❏ chatgpt
+  ├─ ❏ openai
+  ├─ ❏ blackbox
+  ├─ ❏ deepseek
+  ├─ ❏ gemini
+  └─ ❏ text2img
 
-<i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝐂𝐘𝐁𝐈𝐗 𝐃𝐄𝐕𝐒</i>
+◪ 𝐃𝐋 𝐌𝐄𝐍𝐔
+  │
+  ├─ ❏ apk
+  ├─ ❏ spotify
+  ├─ ❏ gitclone
+  ├─ ❏ mediafire
+  ├─ ❏ play
+  ├─ ❏ gdrive
+  └─ ❏ ytmp4
+
+◪ 𝐎𝐓𝐇𝐄𝐑 𝐌𝐄𝐍𝐔
+  │
+  ├─ ❏ repo
+  ├─ ❏ ping
+  ├─ ❏ runtime
+  ├─ ❏ lyrics
+  ├─ ❏ sportify-s
+  ├─ ❏ yts
+  ├─ ❏ weather
+  └─ ❏ wallpaper
+
+◪ 𝐅𝐔𝐍 𝐌𝐄𝐍𝐔
+  │
+  ├─ ❏ joke
+  ├─ ❏ quote
+  └─ ❏ fact
+
+◪ 𝐃𝐄𝐕 𝐌𝐄𝐍𝐔
+  │
+  ├─ ❏ statics
+  ├─ ❏ listusers
+  ├─ ❏ logs
+  ├─ ❏ setbanner
+  ├─ ❏ setprefix
+  ├─ ❏ setbotname
+  └─ ❏ broadcast</code>
+
+ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝐂𝐘𝐁𝐈𝐗 𝐃𝐄𝐕𝐒
 """
-    await send_banner_caption(update, text)
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher(storage=MemoryStorage())
 
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await menu(update, ctx)
-
-# ---------- user tracker ----------
-async def track_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user and update.effective_user.id:
-        USERS.add(int(update.effective_user.id))
-
-# ---------- AI helpers (wrap) ----------
-async def _simple_api_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, url: str, title: str):
-    q = " ".join(ctx.args) if ctx.args else "Hello"
-    res = await api_get(f"{url}{q}")
-    await send_banner_caption(update, f"<b>{title}:</b>\n<code>{res}</code>")
-
-async def chatgpt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/gpt?apikey=prince&q=", "ChatGPT")
-
-async def openai(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/openai?apikey=prince&q=", "OpenAI")
-
-async def blackbox(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/blackbox?apikey=prince&q=", "BlackBox")
-
-async def gemini(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=", "Gemini")
-
-async def deepseek(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q=", "DeepSeek")
-
-async def text2img(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = " ".join(ctx.args) if ctx.args else "cute baby"
-    url = f"https://api.princetechn.com/api/ai/text2img?apikey=prince&prompt={q}"
-    await send_banner_caption(update, f"<b>Text2Img:</b> <i>generating…</i>")
-    await update.effective_chat.send_photo(
-        photo=url,
-        caption=f"<b>Prompt:</b> <code>{q}</code>",
-        reply_markup=MARKUP,
-        parse_mode="HTML"
+# --- FORCE SUBSCRIBE CHECK ---
+async def check_subscribed(user_id):
+    try:
+        member = await bot.get_chat_member(f"@{TG_CHANNEL}", user_id)
+        if member.status in ("creator", "administrator", "member"):
+            return True
+        return False
+    except Exception:
+        return False
+async def require_subscription(message: types.Message):
+    if await check_subscribed(message.from_user.id):
+        return True
+    await message.answer_photo(
+        photo=BANNER_URL,
+        caption=(
+            "🚫 <b>Access Denied!</b>\n\n"
+            "You must <b>join our channel</b> to use this bot.\n"
+            f"👉 <a href='{TG_CHANNEL_LINK}'>Join @{TG_CHANNEL}</a> and try again."
+        ),
+        reply_markup=get_keyboard()
     )
-
-# ---------- DL ----------
-async def apk(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    app = ctx.args[0] if ctx.args else "WhatsApp"
-    res = await api_get(f"https://api.princetechn.com/api/download/apkdl?apikey=prince&appName={app}")
-    await send_banner_caption(update, f"<b>APK:</b>\n<code>{res}</code>")
-
-async def spotify(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.spotify <spotify-url></code>"); return
-    url = ctx.args[0]
-    res = await api_get(f"https://api.princetechn.com/api/download/spotifydlv2?apikey=prince&url={url}")
-    await send_banner_caption(update, f"<b>Spotify:</b>\n<code>{res}</code>")
-
-async def gitclone(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.gitclone <github-url></code>"); return
-    url = ctx.args[0]
-    res = await api_get(f"https://api.princetechn.com/api/download/gitclone?apikey=prince&url={url}")
-    await send_banner_caption(update, f"<b>GitClone:</b>\n<code>{res}</code>")
-
-async def mediafire(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.mediafire <mediafire-url></code>"); return
-    url = ctx.args[0]
-    res = await api_get(f"https://api.princetechn.com/api/download/mediafire?apikey=prince&url={url}")
-    await send_banner_caption(update, f"<b>MediaFire:</b>\n<code>{res}</code>")
-
-async def play(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.play <yt-url></code>"); return
-    url = ctx.args[0]
-    audio_url = f"https://api.princetechn.com/api/download/ytmp3?apikey=prince&url={url}"
-    await send_banner_caption(update, "<b>Play (audio):</b> sending…")
-    await update.effective_chat.send_audio(
-        audio=audio_url,
-        caption=f"<b>Source:</b> <code>{url}</code>",
-        reply_markup=MARKUP,
-        parse_mode="HTML"
+    return False
+async def send_banner(message, caption):
+    await message.answer_photo(
+        photo=BANNER_URL,
+        caption=caption,
+        reply_markup=get_keyboard()
     )
+def prefix_match(text: str, cmd: str):
+    return any(text.lower().startswith(p + cmd) for p in PREFIXES)
 
-async def gdrive(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.gdrive <gdrive-url></code>"); return
-    url = ctx.args[0]
-    res = await api_get(f"https://api.princetechn.com/api/download/gdrivedl?apikey=prince&url={url}")
-    await send_banner_caption(update, f"<b>GDrive:</b>\n<code>{res}</code>")
+# --- MAIN HANDLER ---
+@dp.message(F.text)
+async def all_general_handler(message: types.Message):
+    add_user(message.from_user.id)
+    if message.chat.type in ("group", "supergroup", "channel"):
+        add_chat(message.chat.id)
 
-# ---------- OTHER ----------
-async def repo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_banner_caption(update, "<b>Repo:</b>\nhttps://github.com/yourname/cybix-bot")
-
-async def ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_banner_caption(update, f"<b>Pong:</b> <code>{round(time.time()-START_TIME,3)}s</code>")
-
-async def runtime(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_banner_caption(update, f"<b>Uptime:</b> <code>{hms(time.time()-START_TIME)}</code>")
-
-# ---------- DEV ----------
-async def setprefix(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    global PREFIX
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.setprefix <newprefix></code>"); return
-    PREFIX = ctx.args[0]
-    await send_banner_caption(update, f"<b>Prefix changed →</b> <code>{PREFIX}</code>")
-
-async def setbanner(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    global BANNER_URL
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.setbanner <url></code>"); return
-    BANNER_URL = ctx.args[0]
-    await send_banner_caption(update, "<b>Banner updated.</b>")
-
-async def setbotname(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    if not ctx.args:
-        await send_banner_caption(update, "Usage: <code>.setbotname <name></code>"); return
-    global BOT_NAME
-    BOT_NAME = " ".join(ctx.args)
-    await send_banner_caption(update, f"<b>Bot name →</b> <code>{BOT_NAME}</code>")
-
-async def listusers(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    await send_banner_caption(update, f"<b>Total users:</b> <code>{len(USERS)}</code>")
-
-async def statics(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    await menu(update, ctx)
-
-async def logs(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != OWNER:
-        await send_banner_caption(update, "❌ Owner only"); return
-    await send_banner_caption(update, "<b>Zero warnings, zero errors.</b>")
-
-# ---------- command map ----------
-CMD_MAP = {
-    "menu": menu, "start": start, "bot": menu,
-    "chatgpt": chatgpt, "openai": openai, "blackbox": blackbox,
-    "gemini": gemini, "deepseek": deepseek, "text2img": text2img,
-    "apk": apk, "spotify": spotify, "gitclone": gitclone,
-    "mediafire": mediafire, "play": play, "gdrive": gdrive,
-    "repo": repo, "ping": ping, "runtime": runtime,
-    "setprefix": setprefix, "setbanner": setbanner, "setbotname": setbotname,
-    "listusers": listusers, "statics": statics, "logs": logs
-}
-
-async def route_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await track_user(update, ctx)
-    text = (update.message.text or "").strip()
-    if not text:
+    txt = (message.text or "").lower()
+    # Only menu/start/bot accessible without checking
+    if any(prefix_match(txt, c) for c in ["menu", "start", "bot"]):
+        await send_banner(message, menu_caption(message.from_user))
         return
-    # strip prefix
-    for p in (PREFIX, "/"):
-        if text.startswith(p):
-            text = text[len(p):]
-            break
-    else:
+
+    # Force subscribe for all other commands (private only)
+    if message.chat.type == "private":
+        if not await require_subscription(message):
+            return
+
+    # AI MENU
+    if prefix_match(txt, "chatgpt"):
+        q = message.text.split(" ", 1)[-1] if " " in message.text else "Hello"
+        url = f"https://api.princetechn.com/api/ai/gpt?apikey=prince&q={q}"
+        js = await fetch_api(url)
+        answer = js.get("response", "No response.") if isinstance(js, dict) else str(js)
+        await send_banner(message, f"<b>ChatGPT</b>\n\n{answer}")
         return
-    cmd = text.split()[0].lower()
-    func = CMD_MAP.get(cmd)
-    if func:
-        try:
-            await func(update, ctx)
-        except Exception as e:
-            log.exception("Cmd error")
-            await send_banner_caption(update, f"❌ <b>Error:</b> <code>{e}</code>")
-    else:
-        await send_banner_caption(update, f"<b>Unknown command:</b> <code>{cmd}</code>")
 
-# ---------- keep-alive ----------
-def keep_alive():
-    """Run a minimal aiohttp server in a background thread to satisfy health checks."""
-    from aiohttp import web
+    if prefix_match(txt, "openai"):
+        url = "https://api.princetechn.com/api/ai/openai?apikey=prince&q=Whats+Your+Model"
+        js = await fetch_api(url)
+        answer = js.get("response", "No response.") if isinstance(js, dict) else str(js)
+        await send_banner(message, f"<b>OpenAI</b>\n\n{answer}")
+        return
 
-    async def handler(request):
-        return web.Response(text=f"{BOT_NAME} alive")
+    if prefix_match(txt, "blackbox"):
+        url = "https://api.princetechn.com/api/ai/blackbox?apikey=prince&q=Whats+Your+Model"
+        js = await fetch_api(url)
+        answer = js.get("response", "No response.") if isinstance(js, dict) else str(js)
+        await send_banner(message, f"<b>Blackbox</b>\n\n{answer}")
+        return
 
-    async def _run():
-        app = web.Application()
-        app.router.add_get("/", handler)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", PORT)
-        await site.start()
-        log.info(f"Keep-alive HTTP server started on port {PORT}")
-        # keep the server alive
-        while True:
-            await asyncio.sleep(3600)
+    if prefix_match(txt, "gemini"):
+        url = "https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=Whats+Your+Model"
+        js = await fetch_api(url)
+        answer = js.get("response", "No response.") if isinstance(js, dict) else str(js)
+        await send_banner(message, f"<b>Gemini</b>\n\n{answer}")
+        return
 
-    threading.Thread(target=lambda: asyncio.run(_run()), daemon=True).start()
+    if prefix_match(txt, "deepseek"):
+        url = "https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q=Whats+Your+Model"
+        js = await fetch_api(url)
+        answer = js.get("response", "No response.") if isinstance(js, dict) else str(js)
+        await send_banner(message, f"<b>Deepseek</b>\n\n{answer}")
+        return
 
-# ---------- main ----------
-def main() -> None:
-    app = Application.builder().token(TOKEN).build()
-    # MessageHandler captures prefix-based dot commands (.) and plain text
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_cmd))
-    # keep start/menu as explicit commands
-    app.add_handler(CommandHandler(["start", "menu", "bot"], start))
-    keep_alive()
-    log.info("CYBIX V1 started – zero errors, zero crashes, zero warnings")
-    app.run_polling(drop_pending_updates=True)
+    if prefix_match(txt, "text2img"):
+        prompt = message.text.split(" ", 1)[-1] if " " in message.text else "A Cute Baby"
+        url = f"https://api.princetechn.com/api/ai/text2img?apikey=prince&prompt={prompt}"
+        js = await fetch_api(url)
+        img_url = js.get("url") or js.get("image") if isinstance(js, dict) else ""
+        caption = js.get("response", "Here is your image.") if isinstance(js, dict) else ""
+        if img_url:
+            await message.answer_photo(
+                photo=img_url,
+                caption=f"<b>Text2Img</b>\n\n{caption}",
+                reply_markup=get_keyboard()
+            )
+        else:
+            await send_banner(message, f"<b>Text2Img</b>\n\n{caption}")
+        return
+
+    # DL MENU
+    if prefix_match(txt, "apk"):
+        app = message.text.split(" ", 1)[-1] if " " in message.text else "Whatsapp"
+        url = f"https://api.princetechn.com/api/download/apkdl?apikey=prince&appName={app}"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>APKDL</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "spotify"):
+        url = "https://api.princetechn.com/api/download/spotifydlv2?apikey=prince&url=https%3A%2F%2Fopen.spotify.com%2Ftrack%2F2DGa7iaidT5s0qnINlwMjJ"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>SpotifyDL</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "gitclone"):
+        url = "https://api.princetechn.com/api/download/gitclone?apikey=prince&url=https%3A%2F%2Fgithub.com%2FMayelprince%2FPRINCE-MDXI"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>GitClone</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "mediafire"):
+        url = "https://api.princetechn.com/api/download/mediafire?apikey=prince&url=https%3A%2F%2Fwww.mediafire.com%2Ffile%2F6ucfxy4gqtyq6rv%2FCompany_Accounts_issue_of_shares.ppt%2Ffile"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>MediaFire</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "play"):
+        url = "https://api.princetechn.com/api/download/ytmp3?apikey=prince&url=https%3A%2F%2Fyoutu.be%2FqF-JLqKtr2Q%3Ffeature%3Dshared"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or js.get("audio") or str(js)
+        await send_banner(message, f"<b>YT Play</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "gdrive"):
+        url = "https://api.princetechn.com/api/download/gdrivedl?apikey=prince&url=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1fnq8C1p0y3bEoFeomO56klnMLjbq126c%2Fview%3Fusp%"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>GDriveDL</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "ytmp4"):
+        url = "https://api.princetechn.com/api/download/ytmp4?apikey=prince&url=https%3A%2F%2Fyoutu.be%2FwdJrTQJh1ZQ%3Ffeature%3Dshared"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>YTMP4</b>\n\n{result}")
+        return
+
+    # OTHER MENU
+    if prefix_match(txt, "repo"):
+        await send_banner(message, "<b>Source repository:</b>\nhttps://github.com/DOMINATOE/CYBIX-BOT")
+        return
+
+    if prefix_match(txt, "ping"):
+        await send_banner(message, "<b>Pong!</b>")
+        return
+
+    if prefix_match(txt, "runtime"):
+        await send_banner(message, f"Uptime: <b>{uptime_str()}</b>")
+        return
+
+    if prefix_match(txt, "lyrics"):
+        song = message.text.split(" ", 1)[-1] if " " in message.text else "Dynasty Miaa"
+        url = f"https://api.princetechn.com/api/search/lyrics?apikey=prince&query={song}"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("lyrics") or str(js)
+        await send_banner(message, f"<b>Lyrics</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "sportify-s"):
+        q = message.text.split(" ", 1)[-1] if " " in message.text else "Spectre"
+        url = f"https://api.princetechn.com/api/search/spotifysearch?apikey=prince&query={q}"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>Spotify Search</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "yts"):
+        q = message.text.split(" ", 1)[-1] if " " in message.text else "Spectre"
+        url = f"https://api.princetechn.com/api/search/yts?apikey=prince&query={q}"
+        js = await fetch_api(url)
+        result = js.get("result") or js.get("url") or str(js)
+        await send_banner(message, f"<b>YTS Search</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "weather"):
+        loc = message.text.split(" ", 1)[-1] if " " in message.text else "Kisumu"
+        url = f"https://api.princetechn.com/api/search/weather?apikey=prince&location={loc}"
+        js = await fetch_api(url)
+        result = js.get("result") or str(js)
+        await send_banner(message, f"<b>Weather</b>\n\n{result}")
+        return
+
+    if prefix_match(txt, "wallpaper"):
+        q = message.text.split(" ", 1)[-1] if " " in message.text else "Scary"
+        url = f"https://api.princetechn.com/api/search/wallpaper?apikey=prince&query={q}"
+        js = await fetch_api(url)
+        img_url = js.get("image") or js.get("url") if isinstance(js, dict) else ""
+        caption = js.get("response", "Here is your wallpaper.") if isinstance(js, dict) else ""
+        if img_url:
+            await message.answer_photo(
+                photo=img_url,
+                caption=f"<b>Wallpaper</b>\n\n{caption}",
+                reply_markup=get_keyboard()
+            )
+        else:
+            await send_banner(message, f"<b>Wallpaper</b>\n\n{caption}")
+        return
+
+    # FUN MENU (public apis)
+    if prefix_match(txt, "joke"):
+        url = "https://v2.jokeapi.dev/joke/Any?format=txt"
+        joke = await fetch_api(url)
+        await send_banner(message, f"<b>Joke</b>\n\n{joke}")
+        return
+
+    if prefix_match(txt, "quote"):
+        url = "https://api.quotable.io/random"
+        js = await fetch_api(url)
+        quote = js.get("content") if isinstance(js, dict) else "No quote."
+        author = js.get("author") if isinstance(js, dict) else "Unknown"
+        await send_banner(message, f"<b>Quote</b>\n\n{quote}\n- <i>{author}</i>")
+        return
+
+    if prefix_match(txt, "fact"):
+        url = "https://uselessfacts.jsph.pl/random.json?language=en"
+        js = await fetch_api(url)
+        fact = js.get("text") or "No fact."
+        await send_banner(message, f"<b>Random Fact</b>\n\n{fact}")
+        return
+
+    # DEV MENU (OWNER ONLY)
+    if message.from_user.id == OWNER_ID:
+        if prefix_match(txt, "statics"):
+            msg = f"<b>Statics:</b>\nUsers: {len(USERS)}\nUptime: {uptime_str()}\nMemory: {get_memory()}"
+            await send_banner(message, msg)
+            return
+        if prefix_match(txt, "listusers"):
+            await send_banner(message, "<b>Users:</b>\n" + "\n".join(map(str, USERS)))
+            return
+        if prefix_match(txt, "logs"):
+            await send_banner(message, "<b>No logs available (fileless mode).</b>")
+            return
+        if prefix_match(txt, "setbanner"):
+            await send_banner(message, "<b>Banner is static in this version. Edit code to change.</b>")
+            return
+        if prefix_match(txt, "setprefix"):
+            np = message.text.split(" ", 1)[-1].strip()
+            if np and np not in PREFIXES:
+                PREFIXES.insert(0, np)
+                await send_banner(message, f"Prefix changed to <b>{np}</b>")
+            else:
+                await send_banner(message, "Usage: .setprefix <newprefix>")
+            return
+        if prefix_match(txt, "setbotname"):
+            await send_banner(message, "<b>Bot name is static in this version. Edit code to change.</b>")
+            return
+        if prefix_match(txt, "broadcast"):
+            parts = message.text.split(" ", 1)
+            if len(parts) < 2:
+                await send_banner(message, "Usage: .broadcast <message>")
+                return
+            bmsg = parts[1]
+            # Broadcast to all users and chats
+            count = 0
+            err = 0
+            for uid in USERS:
+                try:
+                    await bot.send_photo(
+                        chat_id=uid,
+                        photo=BANNER_URL,
+                        caption=bmsg,
+                        reply_markup=get_keyboard()
+                    )
+                    count += 1
+                except Exception:
+                    err += 1
+            for cid in CHATS:
+                try:
+                    await bot.send_photo(
+                        chat_id=cid,
+                        photo=BANNER_URL,
+                        caption=bmsg,
+                        reply_markup=get_keyboard()
+                    )
+                    count += 1
+                except Exception:
+                    err += 1
+            await send_banner(message, f"Broadcast sent!\n✅ Success: <b>{count}</b>\n❌ Failed: <b>{err}</b>")
+            return
+
+    # Unknown Command
+    if txt.startswith(tuple(PREFIXES)):
+        await send_banner(message, "<b>Unknown command!</b>\nUse .menu to see all commands.")
 
 if __name__ == "__main__":
-    main()
+    logger.info("Starting CYBIX Bot...")
+    try:
+        asyncio.run(dp.start_polling(bot, skip_updates=True))
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped.")
