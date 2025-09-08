@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
 CYBIX V1 – zero-error, zero-crash, single-file Telegram bot
-python-telegram-bot==20.7
+Requirements: see requirements.txt
 """
-import os, time, logging, psutil, aiohttp, threading
+import os
+import time
+import logging
+import psutil
+import aiohttp
+import threading
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -12,7 +18,9 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ---------- env ----------
 load_dotenv()
 TOKEN   = os.getenv("BOT_TOKEN")
-OWNER   = int(os.getenv("OWNER_ID"))
+if not TOKEN:
+    raise RuntimeError("Missing BOT_TOKEN environment variable")
+OWNER   = int(os.getenv("OWNER_ID", "0"))
 DEF_PRE = os.getenv("DEFAULT_PREFIX", ".")
 PORT    = int(os.getenv("PORT", "8000"))
 
@@ -34,13 +42,21 @@ MARKUP = InlineKeyboardMarkup(CHANNEL_BT)
 START_TIME = time.time()
 USERS      = set()
 PREFIX     = DEF_PRE
+BOT_NAME   = os.getenv("BOT_NAME", "CYBIX V1")
 
 # ---------- util ----------
-def hms(seconds: int) -> str:
-    return str(datetime.utcfromtimestamp(seconds)).split(".")[0]
+def hms(seconds: float) -> str:
+    s = int(seconds)
+    h = s // 3600
+    m = (s % 3600) // 60
+    sec = s % 60
+    return f"{h:02d}:{m:02d}:{sec:02d}"
 
 def memory() -> str:
-    return f"{psutil.virtual_memory().percent}%"
+    try:
+        return f"{psutil.virtual_memory().percent}%"
+    except Exception:
+        return "n/a"
 
 async def api_get(url: str) -> str:
     try:
@@ -51,6 +67,7 @@ async def api_get(url: str) -> str:
                     return f"HTTP {resp.status}"
                 try:
                     data = await resp.json()
+                    # try common fields first
                     return data.get("result") or data.get("response") or str(data)
                 except Exception:
                     return await resp.text()
@@ -58,7 +75,11 @@ async def api_get(url: str) -> str:
         return str(e)
 
 async def send_banner_caption(update: Update, text: str) -> None:
-    await update.effective_chat.send_photo(
+    # safe checks
+    chat = update.effective_chat
+    if chat is None:
+        return
+    await chat.send_photo(
         photo=BANNER_URL,
         caption=text,
         reply_markup=MARKUP,
@@ -68,11 +89,13 @@ async def send_banner_caption(update: Update, text: str) -> None:
 # ---------- stats ----------
 def get_stats(update: Update) -> dict:
     now = datetime.now()
+    user = update.effective_user.first_name if update.effective_user else "Unknown"
+    user_id = update.effective_user.id if update.effective_user else 0
     return {
         "prefix"   : PREFIX,
         "owner"    : OWNER,
-        "user"     : update.effective_user.first_name,
-        "user_id"  : update.effective_user.id,
+        "user"     : user,
+        "user_id"  : user_id,
         "users"    : len(USERS),
         "speed"    : hms(time.time() - START_TIME),
         "status"   : "✅ Online",
@@ -111,30 +134,6 @@ async def menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
   ├─ ❏ ᴅᴇᴇᴘsᴇᴇᴋ
   └─ ❏ ᴛᴇxᴛ2ɪᴍɢ
 
-◪ <b>𝐃𝐋 𝐌𝐄𝐍𝐔</b>
-  │
-  ├─ ❏ ᴀᴘᴋ
-  ├─ ❏ ꜱᴘᴏᴛɪғʏ
-  ├─ ❏ ɢɪᴛᴄʟᴏɴᴇ
-  ├─ ❏ ᴍᴇᴅɪᴀғɪʀᴇ
-  ├─ ❏ ᴘʟᴀʏ
-  └─ ❏ ɢᴅʀɪᴠᴇ
-
-◪ <b>𝐎𝐓𝐇𝐄𝐑 𝐌𝐄𝐍𝐔</b>
-  │
-  ├─ ❏ ʀᴇᴘᴏ
-  ├─ ❏ ᴘɪɴɢ
-  └─ ❏ ʀᴜɴᴛɪᴍᴇ
-
-◪ <b>𝐃𝐄𝐕 𝐌𝐄𝐍𝐔</b>
-  │
-  ├─ ❏ ꜱᴛᴀᴛɪᴄs
-  ├─ ❏ ʟɪꜱᴛᴜꜱᴇʀs
-  ├─ ❏ ʟᴏɢs
-  ├─ ❏ ꜱᴇᴛʙᴀɴɴᴇʀ
-  ├─ ❏ ꜱᴇᴛᴘʀᴇғɪx
-  └─ ❏ ꜱᴇᴛʙᴏᴛɴᴀᴍᴇ
-
 <i>ᴘᴏᴡᴇʀᴇᴅ ʙʏ 𝐂𝐘𝐁𝐈𝐗 𝐃𝐄𝐕𝐒</i>
 """
     await send_banner_caption(update, text)
@@ -144,33 +143,29 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ---------- user tracker ----------
 async def track_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    USERS.add(update.effective_user.id)
+    if update.effective_user and update.effective_user.id:
+        USERS.add(int(update.effective_user.id))
 
-# ---------- AI ----------
-async def chatgpt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+# ---------- AI helpers (wrap) ----------
+async def _simple_api_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, url: str, title: str):
     q = " ".join(ctx.args) if ctx.args else "Hello"
-    res = await api_get(f"https://api.princetechn.com/api/ai/gpt?apikey=prince&q={q}")
-    await send_banner_caption(update, f"<b>ChatGPT:</b>\n<code>{res}</code>")
+    res = await api_get(f"{url}{q}")
+    await send_banner_caption(update, f"<b>{title}:</b>\n<code>{res}</code>")
+
+async def chatgpt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/gpt?apikey=prince&q=", "ChatGPT")
 
 async def openai(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = " ".join(ctx.args) if ctx.args else "Hi"
-    res = await api_get(f"https://api.princetechn.com/api/ai/openai?apikey=prince&q={q}")
-    await send_banner_caption(update, f"<b>OpenAI:</b>\n<code>{res}</code>")
+    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/openai?apikey=prince&q=", "OpenAI")
 
 async def blackbox(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = " ".join(ctx.args) if ctx.args else "Hi"
-    res = await api_get(f"https://api.princetechn.com/api/ai/blackbox?apikey=prince&q={q}")
-    await send_banner_caption(update, f"<b>BlackBox:</b>\n<code>{res}</code>")
+    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/blackbox?apikey=prince&q=", "BlackBox")
 
 async def gemini(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = " ".join(ctx.args) if ctx.args else "Hi"
-    res = await api_get(f"https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q={q}")
-    await send_banner_caption(update, f"<b>Gemini:</b>\n<code>{res}</code>")
+    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/geminiaipro?apikey=prince&q=", "Gemini")
 
 async def deepseek(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = " ".join(ctx.args) if ctx.args else "Hi"
-    res = await api_get(f"https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q={q}")
-    await send_banner_caption(update, f"<b>DeepSeek:</b>\n<code>{res}</code>")
+    await _simple_api_reply(update, ctx, "https://api.princetechn.com/api/ai/deepseek-v3?apikey=prince&q=", "DeepSeek")
 
 async def text2img(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     q = " ".join(ctx.args) if ctx.args else "cute baby"
@@ -320,21 +315,32 @@ async def route_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ---------- keep-alive ----------
 def keep_alive():
+    """Run a minimal aiohttp server in a background thread to satisfy health checks."""
     from aiohttp import web
-    app = web.Application()
-    app.router.add_get("/", lambda _: web.Response(text="CYBIX V1 alive"))
-    runner = web.AppRunner(app)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(runner.setup())
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    loop.run_until_complete(site.start())
-    threading.Thread(target=lambda: loop.run_forever(), daemon=True).start()
+
+    async def handler(request):
+        return web.Response(text=f"{BOT_NAME} alive")
+
+    async def _run():
+        app = web.Application()
+        app.router.add_get("/", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
+        log.info(f"Keep-alive HTTP server started on port {PORT}")
+        # keep the server alive
+        while True:
+            await asyncio.sleep(3600)
+
+    threading.Thread(target=lambda: asyncio.run(_run()), daemon=True).start()
 
 # ---------- main ----------
 def main() -> None:
     app = Application.builder().token(TOKEN).build()
+    # MessageHandler captures prefix-based dot commands (.) and plain text
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, route_cmd))
+    # keep start/menu as explicit commands
     app.add_handler(CommandHandler(["start", "menu", "bot"], start))
     keep_alive()
     log.info("CYBIX V1 started – zero errors, zero crashes, zero warnings")
