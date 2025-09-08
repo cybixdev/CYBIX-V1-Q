@@ -1,14 +1,16 @@
 services:
   - type: web
     name: cybix-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python index.py
+    env: node
     plan: free
+    buildCommand: npm install
+    startCommand: npm start
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: OWNER_ID
         sync: false
-      - key: OWNER_NAME
+      - key: PORT
+        value: 3000
+      - key: RENDER_EXTERNAL_URL
         sync: false
