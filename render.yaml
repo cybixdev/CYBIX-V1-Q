@@ -10,5 +10,7 @@ services:
         sync: false
       - key: OWNER_ID
         sync: false
+      - key: RENDER
+        value: "1"
     ports:
       - port: 8080

@@ -1,15 +1,15 @@
-require('dotenv').config();
-const { Telegraf, Markup } = require('telegraf');
-const axios = require('axios');
-const os = require('os');
-const fs = require('fs');
-const path = require('path');
-const pkg = require('./package.json');
+import "dotenv/config";
+import { Telegraf, Markup } from "telegraf";
+import axios from "axios";
+import fs from "fs";
+import os from "os";
 
 // ENV
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = process.env.OWNER_ID;
 const PORT = process.env.PORT || 8080;
+const PACKAGE_VERSION = process.env.npm_package_version || "2.0.0";
+
 if (!BOT_TOKEN || !OWNER_ID) {
   console.error("[ERROR] BOT_TOKEN or OWNER_ID missing in .env");
   process.exit(1);
@@ -17,7 +17,7 @@ if (!BOT_TOKEN || !OWNER_ID) {
 
 const bot = new Telegraf(BOT_TOKEN, { handlerTimeout: 60_000 });
 
-// GLOBAL STATE
+// STATE
 let prefix = ['.', '/'];
 let botName = 'CYBIX V1';
 let bannerUrl = "https://files.catbox.moe/7dozqn.jpg";
@@ -40,7 +40,7 @@ function getBotStats(ctx) {
     speed: Math.floor(Math.random() * 100) + "ms",
     status: "Online",
     plugins: Object.keys(plugins).length,
-    version: pkg.version || "1.0.0",
+    version: PACKAGE_VERSION,
     time_now: new Date().toLocaleTimeString(),
     date_now: new Date().toLocaleDateString(),
     memory: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`,
@@ -122,7 +122,7 @@ async function sendBannerMenu(ctx, text) {
         ...menuButtons()
       }
     );
-  } catch (err) {
+  } catch {
     await ctx.reply(text || getMenu(ctx), menuButtons());
   }
 }
@@ -360,7 +360,7 @@ registerPlugin('broadcast', async (ctx, args) => {
         caption: msg,
         ...menuButtons()
       });
-    } catch (e) { failed.push(userId); }
+    } catch { failed.push(userId); }
   }
   await sendBannerMenu(ctx, `✅ Broadcast sent.\nFailed: ${failed.length}`);
 });
@@ -368,7 +368,7 @@ registerPlugin('restart', async (ctx) => {
   if (ctx.from.id.toString() !== OWNER_ID) return sendBannerMenu(ctx, "❌ Only owner can use this.");
   const stats = getBotStats(ctx);
   await sendBannerMenu(ctx, `♻️ Bot Restarted!\nVersion: ${stats.version}\nUptime: ${stats.uptime}\nRAM: ${stats.memory}\nUsers: ${stats.users}\nOwner: ${stats.owner}\nTime: ${stats.time_now}\nDate: ${stats.date_now}`);
-  process.exit(0); // Let Render/Termux restart (or use pm2 if desired)
+  process.exit(0);
 });
 
 // -------- CORE COMMAND HANDLER -------- //
@@ -388,18 +388,15 @@ bot.on('text', async ctx => {
   let txt = ctx.message.text;
   let command = parseCommand(txt);
   if (
-    ['/start', '/menu', '.start', '.menu', '.bot'].includes(txt.trim().toLowerCase())
+    ['/start', '/menu', '.menu'].includes(txt.trim().toLowerCase())
     || (command && ['menu', 'bot'].includes(command.cmd))
   ) {
     return sendBannerMenu(ctx);
   }
   if (!command) return;
   if (plugins[command.cmd]) {
-    try {
-      await plugins[command.cmd](ctx, command.args);
-    } catch {
-      await sendBannerMenu(ctx, "❌ Error in plugin.");
-    }
+    try { await plugins[command.cmd](ctx, command.args); }
+    catch { await sendBannerMenu(ctx, "❌ Error in plugin."); }
   }
 });
 
@@ -412,19 +409,18 @@ bot.on('message', async ctx => {
 
 // KEEP ALIVE FOR RENDER
 if (process.env.RENDER) {
-  require('http').createServer((req, res) => {
-    res.end('CYBIX BOT IS RUNNING.');
-  }).listen(PORT, () => {
-    console.log(`[INFO] Web server running on port ${PORT}`);
+  import('http').then(http => {
+    http.createServer((req, res) => {
+      res.end('CYBIX BOT IS RUNNING.');
+    }).listen(PORT, () => {
+      console.log(`[INFO] Web server running on port ${PORT}`);
+    });
   });
 }
 
 // LAUNCH BOT
 bot.launch({ dropPendingUpdates: true }).then(() => {
   console.log("[INFO] CYBIX Bot started!");
-}).catch(err => {
-  console.error("[ERROR] Bot launch failed:", err);
 });
-
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
