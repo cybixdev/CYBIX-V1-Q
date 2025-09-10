@@ -13,32 +13,18 @@ const {
 } = require('./config');
 const { getNextEmoji } = require('./reactions');
 
+// --- Bot/Telegraf Instance ---
+const bot = new Telegraf(config.BOT_TOKEN, { handlerTimeout: 24000 });
+
 // --- Force Join Middleware ---
-botForceJoin: (() => {
-  let checkedUsers = {};
-  return async (ctx, next) => {
-    if (!ctx.from?.id || ctx.chat.type !== 'private' || isOwner(ctx.from.id)) return next();
-    if (checkedUsers[ctx.from.id]) return next();
-    try {
-      const member = await ctx.telegram.getChatMember(config.FORCE_CHANNEL, ctx.from.id);
-      if (['member', 'administrator', 'creator'].includes(member.status)) {
-        addChannelMember(ctx.from.id);
-        checkedUsers[ctx.from.id] = true;
-        return next();
-      } else {
-        await ctx.replyWithPhoto(
-          { url: getBanner() },
-          {
-            caption: `❌ You must join [CYBIXTECH Channel](${config.TG_CHANNEL}) first to use this bot!`,
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([
-              [Markup.button.url('Join Channel', config.TG_CHANNEL)],
-              [Markup.button.url('Contact Owner', config.WA_CHANNEL)]
-            ])
-          }
-        );
-      }
-    } catch (e) {
+bot.use(async (ctx, next) => {
+  if (!ctx.from?.id || ctx.chat.type !== 'private' || isOwner(ctx.from.id)) return next();
+  try {
+    const member = await ctx.telegram.getChatMember(config.FORCE_CHANNEL, ctx.from.id);
+    if (['member', 'administrator', 'creator'].includes(member.status)) {
+      addChannelMember(ctx.from.id);
+      return next();
+    } else {
       await ctx.replyWithPhoto(
         { url: getBanner() },
         {
@@ -51,12 +37,20 @@ botForceJoin: (() => {
         }
       );
     }
-  };
-})();
-
-// --- Bot/Telegraf Instance ---
-const bot = new Telegraf(config.BOT_TOKEN, { handlerTimeout: 24000 });
-bot.use(botForceJoin); // Always check for channel membership
+  } catch (e) {
+    await ctx.replyWithPhoto(
+      { url: getBanner() },
+      {
+        caption: `❌ You must join [CYBIXTECH Channel](${config.TG_CHANNEL}) first to use this bot!`,
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Join Channel', config.TG_CHANNEL)],
+          [Markup.button.url('Contact Owner', config.WA_CHANNEL)]
+        ])
+      }
+    );
+  }
+});
 
 // --- Auto Reactor Middleware ---
 bot.use(async (ctx, next) => {
@@ -212,7 +206,6 @@ devCmds.forEach(cmd => {
         await ctx.sendBanner('Bot name updated!');
         break;
       case 'broadcast':
-        // Broadcast to all users in users.json
         const users = JSON.parse(fs.readFileSync('./users.json', 'utf8'));
         for (let id of Object.keys(users)) {
           try {
