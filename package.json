@@ -1,0 +1,14 @@
+{
+  "name": "cybix-telegram-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.0",
+    "axios": "^1.7.2",
+    "dotenv": "^16.5.1"
+  }
+}
