@@ -169,11 +169,24 @@ bot.use(async (ctx, next) => {
 });
 
 // --- Menu Commands ---
-bot.hears(/^\/(start|menu|bot)$/i, async (ctx) => {
+bot.hears(/^\/start$/i, async (ctx) => {
   addUser(ctx.from.id);
   await ctx.sendBanner();
 });
-bot.hears(new RegExp(`^(${getPrefix()})menu$`, 'i'), async (ctx) => {
+bot.hears(/^\/menu$/i, async (ctx) => {
+  addUser(ctx.from.id);
+  await ctx.sendBanner();
+});
+bot.hears(/^\.menu$/i, async (ctx) => {
+  addUser(ctx.from.id);
+  await ctx.sendBanner();
+});
+bot.hears(/^\/bot$/i, async (ctx) => {
+  addUser(ctx.from.id);
+  await ctx.sendBanner();
+});
+
+bot.hears(new RegExp(`^${getPrefix()}menu$`, 'i'), async (ctx) => {
   addUser(ctx.from.id);
   await ctx.sendBanner();
 });
@@ -181,7 +194,7 @@ bot.hears(new RegExp(`^(${getPrefix()})menu$`, 'i'), async (ctx) => {
 // --- Developer Commands ---
 const devCmds = getDevMenu();
 devCmds.forEach(cmd => {
-  bot.hears(new RegExp(`^(${getPrefix()})${cmd}(?: ?(.+))?$`, 'i'), async (ctx) => {
+  bot.hears(new RegExp(`^${getPrefix()}${cmd}(?: ?(.+))?$`, 'i'), async (ctx) => {
     if (!isOwner(ctx.from.id)) return ctx.sendBanner('❌ Only owner can use this command!');
     switch (cmd) {
       case 'setprefix':
@@ -274,7 +287,18 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?text2img( .+)?$`, 'i'), async (ctx) 
   try {
     const url = `https://api.princetechn.com/api/ai/text2img?apikey=prince&prompt=${encodeURIComponent(prompt)}`;
     const res = await axios.get(url);
-    await ctx.sendBanner(res.data?.result || 'No response');
+    if (res.data && res.data.result && res.data.result.match(/\.(jpg|png|jpeg|gif)$/i)) {
+      // Send as media if a direct image URL
+      await ctx.replyWithPhoto({ url: res.data.result }, {
+        caption: 'Here is your image!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.result || 'No response');
+    }
   } catch { await ctx.sendBanner('Text2Img error'); }
 });
 
@@ -288,13 +312,33 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?joke$`, 'i'), async (ctx) => {
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?meme$`, 'i'), async (ctx) => {
   try {
     const res = await axios.get('https://meme-api.com/gimme');
-    await ctx.sendBanner(res.data?.url || 'No meme found');
+    if (res.data.url && res.data.url.match(/\.(jpg|png|jpeg|gif)$/i)) {
+      await ctx.replyWithPhoto({ url: res.data.url }, {
+        caption: res.data.title || 'Here is your meme!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.url || 'No meme found');
+    }
   } catch { await ctx.sendBanner('Meme error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?waifu$`, 'i'), async (ctx) => {
   try {
     const res = await axios.get('https://api.waifu.pics/sfw/waifu');
-    await ctx.sendBanner(res.data?.url || 'No waifu found');
+    if (res.data.url && res.data.url.match(/\.(jpg|png|jpeg|gif)$/i)) {
+      await ctx.replyWithPhoto({ url: res.data.url }, {
+        caption: 'Here is your waifu!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.url || 'No waifu found');
+    }
   } catch { await ctx.sendBanner('Waifu error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?dare$`, 'i'), async (ctx) => {
@@ -368,7 +412,17 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?wallpaper (.+)$`, 'i'), async (ctx) 
   try {
     const q = ctx.match[2];
     const res = await axios.get(`https://api.princetechn.com/api/search/wallpaper?apikey=prince&query=${encodeURIComponent(q)}`);
-    await ctx.sendBanner(res.data?.result || 'No wallpaper found.');
+    if (res.data.result && res.data.result.match(/\.(jpg|png|jpeg|gif)$/i)) {
+      await ctx.replyWithPhoto({ url: res.data.result }, {
+        caption: 'Here is your wallpaper!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.result || 'No wallpaper found.');
+    }
   } catch { await ctx.sendBanner('Wallpaper error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?weather (.+)$`, 'i'), async (ctx) => {
@@ -391,7 +445,17 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?apk (.+)$`, 'i'), async (ctx) => {
   try {
     const appName = ctx.match[2];
     const res = await axios.get(`https://api.princetechn.com/api/download/apkdl?apikey=prince&appName=${encodeURIComponent(appName)}`);
-    await ctx.sendBanner(res.data?.result || 'No APK found.');
+    if (res.data.result && res.data.result.match(/\.(apk)$/i)) {
+      await ctx.replyWithDocument({ url: res.data.result }, {
+        caption: 'Here is your APK!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.result || 'No APK found.');
+    }
   } catch { await ctx.sendBanner('APK error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?spotify (.+)$`, 'i'), async (ctx) => {
@@ -419,14 +483,34 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?play (.+)$`, 'i'), async (ctx) => {
   try {
     const url = ctx.match[2];
     const res = await axios.get(`https://api.princetechn.com/api/download/ytmp3?apikey=prince&url=${encodeURIComponent(url)}`);
-    await ctx.sendBanner(res.data?.result || 'No audio found.');
+    if (res.data.result && res.data.result.match(/\.(mp3)$/i)) {
+      await ctx.replyWithAudio({ url: res.data.result }, {
+        caption: 'Here is your MP3!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.result || 'No audio found.');
+    }
   } catch { await ctx.sendBanner('Play error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?ytmp4 (.+)$`, 'i'), async (ctx) => {
   try {
     const url = ctx.match[2];
     const res = await axios.get(`https://api.princetechn.com/api/download/ytmp4?apikey=prince&url=${encodeURIComponent(url)}`);
-    await ctx.sendBanner(res.data?.result || 'No video found.');
+    if (res.data.result && res.data.result.match(/\.(mp4)$/i)) {
+      await ctx.replyWithVideo({ url: res.data.result }, {
+        caption: 'Here is your MP4!',
+        ...Markup.inlineKeyboard([
+          [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+          [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+        ])
+      });
+    } else {
+      await ctx.sendBanner(res.data?.result || 'No video found.');
+    }
   } catch { await ctx.sendBanner('YTMP4 error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?gdrive (.+)$`, 'i'), async (ctx) => {
@@ -442,7 +526,11 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?repo$`, 'i'), async (ctx) => {
   await ctx.sendBanner('GitHub: https://github.com/Tr0pshdbl/cybix-telegram-bot');
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?ping$`, 'i'), async (ctx) => {
-  await ctx.sendBanner('Pong!');
+  // Real pong with latency calculation
+  const start = Date.now();
+  const m = await ctx.sendBanner('Measuring latency...');
+  const latency = Date.now() - start;
+  await ctx.sendBanner(`Pong! Latency: ${latency} ms`);
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?runtime$`, 'i'), async (ctx) => {
   await ctx.sendBanner(`Uptime: ${process.uptime().toFixed(2)}s`);
@@ -486,13 +574,25 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?dl-xvideo (.+)$`, 'i'), async (ctx) 
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?boobs$`, 'i'), async (ctx) => {
   try {
     const res = await axios.get('https://api.waifu.pics/nsfw/boobs');
-    await ctx.sendBanner(res.data?.url || 'No image.');
+    await ctx.replyWithPhoto({ url: res.data.url }, {
+      caption: 'Here is your boobs image!',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+        [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+      ])
+    });
   } catch { await ctx.sendBanner('Boobs error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?ass$`, 'i'), async (ctx) => {
   try {
     const res = await axios.get('https://api.waifu.pics/nsfw/ass');
-    await ctx.sendBanner(res.data?.url || 'No image.');
+    await ctx.replyWithPhoto({ url: res.data.url }, {
+      caption: 'Here is your ass image!',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+        [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+      ])
+    });
   } catch { await ctx.sendBanner('Ass error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?nudes$`, 'i'), async (ctx) => {
@@ -501,7 +601,13 @@ bot.hears(new RegExp(`^(${getPrefix()}|\\/)?nudes$`, 'i'), async (ctx) => {
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?pornpic$`, 'i'), async (ctx) => {
   try {
     const res = await axios.get('https://nekobot.xyz/api/image?type=hentai');
-    await ctx.sendBanner(res.data?.message || 'No image.');
+    await ctx.replyWithPhoto({ url: res.data.message }, {
+      caption: 'Here is your hentai image!',
+      ...Markup.inlineKeyboard([
+        [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
+        [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
+      ])
+    });
   } catch { await ctx.sendBanner('Pornpic error'); }
 });
 bot.hears(new RegExp(`^(${getPrefix()}|\\/)?pornvid$`, 'i'), async (ctx) => {
