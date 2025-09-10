@@ -2,18 +2,9 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const fs = require('fs');
-const {
-  config,
-  isOwner,
-  getPrefix, setPrefix,
-  setBanner, getBanner,
-  setBotName, getBotName,
-  getDevMenu,
-  addUser, isUserInChannel, addChannelMember
-} = require('./config');
+const { config, isOwner, getPrefix, setPrefix, setBanner, getBanner, setBotName, getBotName, getDevMenu, addUser, isUserInChannel, addChannelMember } = require('./config');
 const { getNextEmoji } = require('./reactions');
 
-// --- Bot/Telegraf Instance ---
 const bot = new Telegraf(config.BOT_TOKEN, { handlerTimeout: 24000 });
 
 // --- Force Join Middleware ---
@@ -52,17 +43,6 @@ bot.use(async (ctx, next) => {
   }
 });
 
-// --- Auto Reactor Middleware ---
-bot.use(async (ctx, next) => {
-  await next();
-  let mid = ctx.message?.message_id || ctx.update?.message?.message_id || ctx.update?.callback_query?.message?.message_id;
-  if (mid) {
-    try {
-      await ctx.telegram.sendMessage(ctx.chat.id, getNextEmoji(), { reply_to_message_id: mid });
-    } catch (e) {}
-  }
-});
-
 // --- Banner/buttons sender ---
 async function sendBanner(ctx, caption) {
   const m = await ctx.replyWithPhoto(
@@ -76,10 +56,21 @@ async function sendBanner(ctx, caption) {
       ])
     }
   );
-  if (m?.message_id) {
-    try { await ctx.telegram.sendMessage(ctx.chat.id, getNextEmoji(), { reply_to_message_id: m.message_id }); } catch (e) {}
-  }
+  // React to the bot's sent message with an emoji (using setMessageReaction, not sending as message)
+  try {
+    await ctx.telegram.setMessageReaction(ctx.chat.id, m.message_id, [getNextEmoji()]);
+  } catch (e) {}
 }
+
+// --- React to user messages ---
+bot.on('message', async (ctx, next) => {
+  try {
+    if (ctx.message?.message_id) {
+      await ctx.telegram.setMessageReaction(ctx.chat.id, ctx.message.message_id, [getNextEmoji()]);
+    }
+  } catch (e) {}
+  await next();
+});
 
 // --- Menu Caption (original structure, fully preserved) ---
 function genMenuCaption(ctx) {
@@ -206,16 +197,18 @@ devCmds.forEach(cmd => {
         await ctx.sendBanner('Bot name updated!');
         break;
       case 'broadcast':
+        // Broadcast to all users in users.json
         const users = JSON.parse(fs.readFileSync('./users.json', 'utf8'));
         for (let id of Object.keys(users)) {
           try {
-            await bot.telegram.sendPhoto(id, { url: getBanner() }, {
+            const msg = await bot.telegram.sendPhoto(id, { url: getBanner() }, {
               caption: `Broadcast: ${ctx.match[2]}`,
               ...Markup.inlineKeyboard([
                 [Markup.button.url('Telegram Channel', config.TG_CHANNEL)],
                 [Markup.button.url('WhatsApp Channel', config.WA_CHANNEL)]
               ])
             });
+            await bot.telegram.setMessageReaction(id, msg.message_id, [getNextEmoji()]);
           } catch (e) {}
         }
         await ctx.sendBanner('Broadcast sent!');
