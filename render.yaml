@@ -3,7 +3,6 @@
     {
       "type": "web",
       "name": "j-afrix-ai-api",
-      "repo": "https://github.com/jadenafrix/j-afrix-ai-api",
       "env": "python",
       "plan": "starter",
       "buildCommand": "pip install -r requirements.txt",
