@@ -1,0 +1,19 @@
+{
+  "services": [
+    {
+      "type": "web",
+      "name": "j-afrix-ai-api",
+      "env": "node",
+      "plan": "starter",
+      "buildCommand": "npm install",
+      "startCommand": "npm start",
+      "autoDeploy": true,
+      "envVars": [
+        {
+          "key": "DEEPSEEK_API_KEY",
+          "value": "sk-88ebcb23ec7f463fbe75e80cc0224c5f"
+        }
+      ]
+    }
+  ]
+}

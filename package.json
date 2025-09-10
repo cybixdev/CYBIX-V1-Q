@@ -1,0 +1,27 @@
+{
+  "name": "j-afrix-ai-api",
+  "version": "1.0.0",
+  "description": "J.AFRIX AI - Advanced, production-ready DeepSeek-based AI API by Jaden Afrix",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "ai",
+    "express",
+    "api",
+    "deepseek",
+    "production",
+    "render",
+    "jadenafrix"
+  ],
+  "author": "Jaden Afrix",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.6",
+    "express": "^4.19.2",
+    "uuid": "^9.0.1"
+  }
+}
