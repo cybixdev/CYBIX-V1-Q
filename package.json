@@ -1,14 +1,23 @@
 {
-  "name": "cybix-telegram-bot",
+  "name": "j-afrix-ai-api",
   "version": "1.0.0",
-  "main": "index.js",
-  "license": "MIT",
+  "description": "J.AFRIX AI - Advanced, production-ready test-based AI API by Jaden Afrix",
+  "main": "main.py",
   "scripts": {
-    "start": "node index.js"
+    "start": "uvicorn main:app --host 0.0.0.0 --port 8000"
   },
-  "dependencies": {
-    "telegraf": "^4.15.0",
-    "axios": "^1.7.2",
-    "dotenv": "^16.5.1"
-  }
+  "keywords": [
+    "ai",
+    "fastapi",
+    "api",
+    "test",
+    "gpt2",
+    "sentiment",
+    "production",
+    "render",
+    "vercel",
+    "jadenafrix"
+  ],
+  "author": "Jaden Afrix",
+  "license": "MIT"
 }
